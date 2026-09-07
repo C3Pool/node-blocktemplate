@@ -9,13 +9,14 @@
     "bitcoin_utils.js",
     "binding.gyp",
     "index.js",
+    "pearl.js",
     "rtm.js",
     "src"
   ],
   "scripts": {
     "lint": "eslint .",
     "pretest": "npm run lint && node tests/ensure-build.js",
-    "test": "node --test --test-reporter=spec tests/test.js"
+    "test": "node --test --test-reporter=spec tests/test.js tests/pearl.test.js tests/pearl-index.test.js"
   },
   "engines": {
     "node": ">=22.9.0",

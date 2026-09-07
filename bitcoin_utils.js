@@ -101,6 +101,40 @@ function addressToScript(addr) {
   return Buffer.concat([Buffer.from([0x00, 0x14]), decoded]);
 }
 
+// Decodes a bech32m witness-v1 (Taproot / P2TR) address into its output script.
+//
+// Kept separate from addressToScript on purpose: that function decodes bech32
+// (witness v0) and base58 for the existing coins, and widening it would change
+// their behaviour. Chains whose consensus requires Taproot coinbase outputs --
+// Pearl, for one -- call this instead.
+//
+// expectedPrefix, when given, is enforced against the address HRP. Paying a
+// coinbase to a correctly-formed address from the wrong network is silent and
+// unrecoverable, so callers that know their HRP should pass it.
+function taprootAddressToScript(addr, expectedPrefix) {
+  if (typeof addr !== 'string') throw new Error('Invalid taproot address');
+  if (addr.length > MAX_BECH32_ADDRESS_LENGTH) throw new Error('Invalid taproot address length');
+
+  let decoded;
+  try {
+    decoded = bech32.bech32m.decode(addr);
+  } catch (_err) {
+    throw new Error('Invalid taproot address');
+  }
+
+  if (expectedPrefix !== undefined && decoded.prefix !== expectedPrefix) {
+    throw new Error(`Invalid taproot address prefix: expected ${expectedPrefix}, got ${decoded.prefix}`);
+  }
+  if (!Array.isArray(decoded.words) || decoded.words.length < 1) throw new Error('Invalid taproot address');
+  if (decoded.words[0] !== 1) throw new Error('Invalid taproot address: not witness version 1');
+
+  const program = Buffer.from(bech32.bech32m.fromWords(decoded.words.slice(1)));
+  if (program.length !== 32) throw new Error('Invalid taproot address: witness program must be 32 bytes');
+
+  // OP_1 OP_DATA_32 <program>
+  return Buffer.concat([Buffer.from([0x51, 0x20]), program]);
+}
+
 function serializeTransaction(tx) {
   const inputs = tx.inputs || [];
   const outputs = tx.outputs || [];
@@ -286,5 +320,6 @@ module.exports = {
   p2pkhScript,
   readRawBitcoinTransaction,
   serializeTransaction,
+  taprootAddressToScript,
   varIntBuffer
 };

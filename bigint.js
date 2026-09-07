@@ -2,6 +2,10 @@
 
 const BASE_DIFF = BigInt("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
 const BASE_RAVEN_DIFF = BigInt("0x00000000ff000000000000000000000000000000000000000000000000000000");
+// Pearl's PowLimit (node/chaincfg/params.go: PowLimitBits = 0x1b00ffff), i.e.
+// 0xffff << 192. Pearl difficulty is PowLimit/target, so this -- not 2^256 --
+// is the base that makes pool difficulty numbers match the chain and explorers.
+const BASE_PEARL_DIFF = BigInt("0x000000000000ffff000000000000000000000000000000000000000000000000");
 const DIFF_PRECISION = 1000000000n;
 
 function parseBigInt(value, base) {
@@ -40,6 +44,7 @@ function difficultyToFloat(base, target, targetBase, label = "target") {
 
 module.exports = {
   BASE_DIFF,
+  BASE_PEARL_DIFF,
   BASE_RAVEN_DIFF,
   difficultyToFloat,
   parseBigInt,

@@ -5,9 +5,10 @@ const varuint = require('varuint-bitcoin');
 const crypto  = require('crypto');
 const fastMerkleRoot = require('merkle-lib/fastRoot');
 
-const { BASE_DIFF, BASE_RAVEN_DIFF, difficultyToFloat, parsePositiveBigInt } = require('./bigint');
+const { BASE_DIFF, BASE_PEARL_DIFF, BASE_RAVEN_DIFF, difficultyToFloat, parsePositiveBigInt } = require('./bigint');
 const bitcoinUtils = require('./bitcoin_utils');
 const rtm = require('./rtm');
+const pearl = require('./pearl');
 
 const MAX_TEMPLATE_TRANSACTIONS = 5000;
 
@@ -62,6 +63,10 @@ module.exports.baseDiff = function() {
 
 module.exports.baseRavenDiff = function() {
   return BASE_RAVEN_DIFF;
+};
+
+module.exports.basePearlDiff = function() {
+  return BASE_PEARL_DIFF;
 };
 
 module.exports.RavenBlockTemplate = function(rpcData, poolAddress) {
@@ -269,6 +274,62 @@ module.exports.convertRtmBlob = function(blobBuffer) {
   const header = blobBuffer.slice(0, 80);
   update_merkle_root_hash(80, true, blobBuffer, header, transaction_hash);
   return header;
+};
+
+module.exports.PearlBlockTemplate = function(rpcData, poolAddress) {
+  return pearl.PearlBlockTemplate(rpcData, poolAddress);
+};
+
+// The incomplete header handed to Pearl miners: the 108-byte header with the
+// real merkle root filled in, truncated before the 32-byte proofCommitment the
+// miner's certificate will supply.
+module.exports.convertPearlBlob = function(blobBuffer) {
+  const header = blobBuffer.slice(0, pearl.PEARL_HEADER_LEN);
+  update_merkle_root_hash(pearl.PEARL_HEADER_LEN, false, blobBuffer, header, transaction_hash);
+  return header.slice(0, pearl.PEARL_INCOMPLETE_HEADER_LEN);
+};
+
+// ProofCommitment = SHA256d(CertificateVersion_LE(4) || PublicData)
+// (node/wire/certificate.go). PublicData is opaque to the pool.
+module.exports.pearlProofCommitment = function(certVersion, publicDataBuff) {
+  if (!pearl.ALLOWED_CERT_VERSIONS.has(certVersion)) {
+    throw new Error(`Unsupported PRL certificate version: ${certVersion}`);
+  }
+  const versionBuff = Buffer.alloc(4);
+  versionBuff.writeUInt32LE(certVersion, 0);
+  return hash256(Buffer.concat([versionBuff, publicDataBuff]));
+};
+
+// Pearl block identity is the double-SHA256 of the full 108-byte header.
+module.exports.pearlBlockHashBuff = function(headerBuffer) {
+  if (headerBuffer.length !== pearl.PEARL_HEADER_LEN) throw new Error('Invalid PRL header length');
+  return reverseBuffer(hash256(headerBuffer));
+};
+
+// Completes a template into a submittable block. Pearl serializes the
+// certificate BEFORE the header (node/wire/msgblock.go PrlEncode), so this
+// prepends rather than splices. blockTemplate is mutated in place (its merkle
+// root and proofCommitment are filled in), matching constructNewRtmBlob.
+//
+// The three steps are ordered by their dependencies and cannot be reshuffled:
+// the merkle root is only final once the extranonce has been written into the
+// coinbase, the proofCommitment covers the certificate's public data, and the
+// certificate in turn carries the hash of the header those 32 bytes complete.
+module.exports.constructNewPearlBlob = function(blockTemplate, certVersion, publicDataBuff, proofBuff) {
+  update_merkle_root_hash(pearl.PEARL_HEADER_LEN, false, blockTemplate, blockTemplate, transaction_hash);
+  const commitment = module.exports.pearlProofCommitment(certVersion, publicDataBuff);
+  commitment.copy(blockTemplate, pearl.PEARL_INCOMPLETE_HEADER_LEN, 0, 32);
+  const blockHash = hash256(blockTemplate.slice(0, pearl.PEARL_HEADER_LEN));
+  const cert = pearl.serializePearlCertificate(certVersion, blockHash, publicDataBuff, proofBuff);
+  if (cert.length > pearl.CERTIFICATE_MAX_SIZE) throw new Error('PRL certificate too large');
+  return Buffer.concat([cert, blockTemplate]);
+};
+
+// Block id of an assembled Pearl block. The header does not start the buffer --
+// the certificate does -- so its length has to be walked before hashing.
+module.exports.getPearlBlockId = function(blockBuffer) {
+  const offset = pearl.pearlCertificateLength(blockBuffer);
+  return module.exports.pearlBlockHashBuff(blockBuffer.slice(offset, offset + pearl.PEARL_HEADER_LEN));
 };
 
 module.exports.convertKcnBlob = function(blobBuffer) {
