@@ -254,6 +254,7 @@ module.exports.ScashBlockTemplate = function (rpcData, poolAddress) {
 module.exports.SCASH_HEADER_LEN = SCASH_HEADER_LEN;
 module.exports.SCASH_NONCE_OFFSET = SCASH_NONCE_OFFSET;
 module.exports.SCASH_RX_HASH_OFFSET = SCASH_RX_HASH_OFFSET;
+module.exports.SCASH_EXTRA_NONCE_LENGTH = EXTRA_NONCE_PLACEHOLDER_LENGTH;
 module.exports.scashSeedHash = scashSeedHash;
 module.exports.scashAddressToScript = scashAddressToScript;
 module.exports.sha256d = sha256d;

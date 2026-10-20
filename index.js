@@ -405,6 +405,53 @@ module.exports.scashBlockHashBuff = function(blockBuffer) {
 
 module.exports.scashSeedHash = scash.scashSeedHash;
 
+// The Bitcoin-stratum view of a SCASH template, for miners that assemble the
+// coinbase themselves (SRBMiner "randomscash", cpuminer-scash): the coinbase in
+// its txid (non-witness) serialization, where the template's extranonce slot
+// sits inside it, and the merkle branch that folds the coinbase txid into the
+// root. Branch hashes are in internal byte order, as stratum sends them.
+module.exports.scashStratumParts = function(blobBuffer, reservedOffset) {
+  let offset = scash.SCASH_HEADER_LEN;
+  const nTransactions = varuint.decode(blobBuffer, offset);
+  offset += varuint.decode.bytes;
+  if (nTransactions < 1 || nTransactions > MAX_TEMPLATE_TRANSACTIONS) {
+    throw new Error('Invalid transaction count in block template');
+  }
+  const coinbaseStart = offset;
+  const transactions = [];
+  for (let i = 0; i < nTransactions; ++i) {
+    const parsed = bitcoinUtils.readRawBitcoinTransaction(blobBuffer, offset);
+    transactions.push(parsed.transaction);
+    offset = parsed.offset;
+  }
+  if (offset !== blobBuffer.length) throw new Error('Unexpected data after block template transactions');
+
+  const coinbase = transactions[0].__toBuffer(undefined, undefined, false);
+  // The segwit marker and flag sit right after the version and are not part of
+  // the txid serialization, so the slot moves two bytes closer to the start.
+  const hasWitnessMarker = blobBuffer[coinbaseStart + 4] === 0x00 && blobBuffer[coinbaseStart + 5] === 0x01;
+  const extraNonceOffset = reservedOffset - coinbaseStart - (hasWitnessMarker ? 2 : 0);
+  const slot = blobBuffer.slice(reservedOffset, reservedOffset + scash.SCASH_EXTRA_NONCE_LENGTH);
+  if (extraNonceOffset <= 4 || extraNonceOffset + scash.SCASH_EXTRA_NONCE_LENGTH > coinbase.length ||
+      !coinbase.slice(extraNonceOffset, extraNonceOffset + scash.SCASH_EXTRA_NONCE_LENGTH).equals(slot)) {
+    throw new Error('Extranonce slot is not inside the SCASH coinbase');
+  }
+
+  // level holds positions 1.. of the current tree level; position 0 is the
+  // coinbase path, so each level contributes its position-1 hash to the branch.
+  let level = transactions.slice(1).map((transaction) => transaction_hash(transaction, false));
+  const merkleBranch = [];
+  while (level.length > 0) {
+    merkleBranch.push(level[0]);
+    const rest = level.slice(1);
+    if (rest.length % 2 === 1) rest.push(rest[rest.length - 1]);
+    const next = [];
+    for (let i = 0; i < rest.length; i += 2) next.push(hash256(Buffer.concat([rest[i], rest[i + 1]])));
+    level = next;
+  }
+  return { coinbase, extraNonceOffset, merkleBranch };
+};
+
 module.exports.convertKcnBlob = function(blobBuffer) {
   const header = blobBuffer.slice(0, 80);
   update_merkle_root_hash(80, false, blobBuffer, header, transaction_hash3, hash256_3);

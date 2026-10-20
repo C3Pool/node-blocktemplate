@@ -67,3 +67,40 @@ test('SCASH refuses another chain\'s payout address and a malformed witness comm
   assert.throws(() => bt.ScashBlockTemplate(gbt(), BCRT), /prefix/);
   assert.throws(() => bt.ScashBlockTemplate(gbt({ default_witness_commitment: 'e2'.repeat(32) }), RSCASH), /witness_commitment/);
 });
+
+// A minimal legacy transaction: one input, one output; `tag` makes each one distinct.
+function legacyTx(tag) {
+  return Buffer.concat([
+    Buffer.from('01000000', 'hex'), Buffer.from([1]), Buffer.alloc(32, tag), Buffer.from('00000000', 'hex'),
+    Buffer.from([0]), Buffer.from('ffffffff', 'hex'),
+    Buffer.from([1]), Buffer.from('e803000000000000', 'hex'), Buffer.from([1, 0x51]), Buffer.from('00000000', 'hex')
+  ]).toString('hex');
+}
+
+test('SCASH stratum parts rebuild the same merkle root a miner-built coinbase gets', () => {
+  for (let count = 0; count <= 5; count++) {
+    const transactions = Array.from({ length: count }, (_v, i) => ({ data: legacyTx(i + 1) }));
+    const t = bt.ScashBlockTemplate(gbt({ transactions }), RSCASH);
+    const blob = Buffer.from(t.blocktemplate_blob, 'hex');
+    const parts = bt.scashStratumParts(blob, t.reserved_offset);
+    assert.equal(parts.merkleBranch.length, count === 0 ? 0 : Math.ceil(Math.log2(count + 1)));
+    // What a stratum miner does: fill its extranonce into the coinbase, hash it, fold the branch.
+    const extraNonce = Buffer.from('ffffffff0102030405060708090a0b0c', 'hex');
+    const coinbase = Buffer.from(parts.coinbase);
+    extraNonce.copy(coinbase, parts.extraNonceOffset);
+    let root = sha256d(coinbase);
+    for (const step of parts.merkleBranch) root = sha256d(Buffer.concat([root, step]));
+    // The pool's view: the same bytes in the template's slot.
+    extraNonce.copy(blob, t.reserved_offset);
+    assert.equal(root.toString('hex'), bt.convertScashBlob(blob).slice(36, 68).toString('hex'), `with ${count} transactions`);
+  }
+});
+
+test('SCASH stratum coinbase is the txid serialization (no segwit marker or witness)', () => {
+  const t = bt.ScashBlockTemplate(gbt(), RSCASH);
+  const parts = bt.scashStratumParts(Buffer.from(t.blocktemplate_blob, 'hex'), t.reserved_offset);
+  assert.equal(parts.coinbase.slice(4, 6).toString('hex'), '0100'); // input count 1, then the null prevout
+  assert.equal(parts.coinbase.slice(parts.extraNonceOffset, parts.extraNonceOffset + 17).toString('hex'), 'cc'.repeat(17));
+  assert.equal(parts.coinbase.slice(-4).toString('hex'), '00000000');
+  assert.throws(() => bt.scashStratumParts(Buffer.from(t.blocktemplate_blob, 'hex'), 50), /slot/); // inside the header, not the coinbase
+});
