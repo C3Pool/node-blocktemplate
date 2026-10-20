@@ -9,6 +9,7 @@ const { BASE_DIFF, BASE_PEARL_DIFF, BASE_RAVEN_DIFF, difficultyToFloat, parsePos
 const bitcoinUtils = require('./bitcoin_utils');
 const rtm = require('./rtm');
 const pearl = require('./pearl');
+const scash = require('./scash');
 
 const MAX_TEMPLATE_TRANSACTIONS = 5000;
 const MAX_PEARL_SOLUTION_DATA_BYTES = 16 * 1024;
@@ -371,6 +372,38 @@ module.exports.getPearlBlockId = function(blockBuffer) {
   const offset = pearl.pearlCertificateLength(blockBuffer);
   return module.exports.pearlBlockHashBuff(blockBuffer.slice(offset, offset + pearl.PEARL_HEADER_LEN));
 };
+
+module.exports.ScashBlockTemplate = function(rpcData, poolAddress) {
+  return scash.ScashBlockTemplate(rpcData, poolAddress);
+};
+
+// The 112-byte SCASH header miners hash: the real merkle root for this
+// extranonce filled in, hashRandomX left zeroed (it is the hash of exactly
+// these bytes, so it is only written into the block at submit).
+module.exports.convertScashBlob = function(blobBuffer) {
+  const header = Buffer.from(blobBuffer.slice(0, scash.SCASH_HEADER_LEN));
+  update_merkle_root_hash(scash.SCASH_HEADER_LEN, false, blobBuffer, header, transaction_hash);
+  header.fill(0, scash.SCASH_RX_HASH_OFFSET, scash.SCASH_HEADER_LEN);
+  return header;
+};
+
+// Completes a template into a submittable block: merkle root, the miner's
+// nonce, and the RandomX hash of the zeroed header. blockTemplate is mutated in
+// place, matching constructNewRtmBlob.
+module.exports.constructNewScashBlob = function(blockTemplate, nonceBuff, rxHashBuff) {
+  if (!Buffer.isBuffer(rxHashBuff) || rxHashBuff.length !== 32) throw new Error('Invalid SCASH RandomX hash');
+  update_merkle_root_hash(scash.SCASH_HEADER_LEN, false, blockTemplate, blockTemplate, transaction_hash);
+  nonceBuff.copy(blockTemplate, scash.SCASH_NONCE_OFFSET, 0, 4);
+  rxHashBuff.copy(blockTemplate, scash.SCASH_RX_HASH_OFFSET, 0, 32);
+  return blockTemplate;
+};
+
+// SCASH block identity: SHA256d of the complete 112-byte header (hashRandomX included).
+module.exports.scashBlockHashBuff = function(blockBuffer) {
+  return reverseBuffer(hash256(blockBuffer.slice(0, scash.SCASH_HEADER_LEN)));
+};
+
+module.exports.scashSeedHash = scash.scashSeedHash;
 
 module.exports.convertKcnBlob = function(blobBuffer) {
   const header = blobBuffer.slice(0, 80);
