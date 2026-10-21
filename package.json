@@ -11,6 +11,7 @@
     "index.js",
     "pearl.js",
     "rtm.js",
+    "scash.js",
     "src"
   ],
   "scripts": {
